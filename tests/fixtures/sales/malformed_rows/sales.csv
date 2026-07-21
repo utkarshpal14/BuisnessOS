@@ -1,0 +1,5 @@
+Order ID,Order Date,Region,Product,Customer Name,Quantity,Unit Price
+1,2023-01-05,North,Widget A,Alice,2,50
+2,not-a-date,South,Widget B,Bob,1,100
+3,2023-01-20,North,Widget A,Alice,abc,50
+4,2023-02-02,South,Widget A,Carol,1,50

@@ -16,7 +16,15 @@ from app.planner.exceptions import (
     InvalidTaskException,
 )
 from app.agents.base import BaseAgent
-from app.agents.mock_agents import SalesAgent, FinanceAgent
+from app.agents.mock_agents import FinanceAgent
+from app.sales.agent import SalesAgent
+
+# Fixture dataset directory with a small, deterministic, clean sales CSV -- used so
+# these Planner integration tests don't depend on whether a real Kaggle CSV has been
+# placed in datasets/sales/ yet.
+FIXTURES_VALID_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "fixtures", "sales", "valid")
+)
 
 class FaultyAgent(BaseAgent):
     """Agent that raises an exception during execution for testing error handling."""
@@ -74,12 +82,12 @@ class TestPlannerFramework(unittest.TestCase):
 
     def test_mock_agents_execution(self):
         task = PlannerTask(task_type="sales", query="Show Q3 pipeline")
-        
-        sales = SalesAgent()
+
+        sales = SalesAgent(dataset_dir=FIXTURES_VALID_DIR)
         res_sales = sales.execute(task)
         self.assertEqual(res_sales.agent_name, "sales")
         self.assertEqual(res_sales.status, "success")
-        self.assertEqual(res_sales.summary, "Mock sales response")
+        self.assertIn("Total revenue is $725.00", res_sales.summary)
 
         finance = FinanceAgent()
         res_fin = finance.execute(task)
@@ -105,7 +113,7 @@ class TestPlannerFramework(unittest.TestCase):
 
     def test_planner_service_single_agent_success(self):
         registry = AgentRegistry()
-        registry.register(SalesAgent())
+        registry.register(SalesAgent(dataset_dir=FIXTURES_VALID_DIR))
         planner = PlannerService(registry=registry)
 
         task = PlannerTask(task_type="sales", query="Get sales report")
@@ -114,14 +122,14 @@ class TestPlannerFramework(unittest.TestCase):
         self.assertEqual(response.task_id, task.task_id)
         self.assertEqual(response.status, "success")
         self.assertEqual(response.participating_agents, ["sales"])
-        self.assertEqual(response.summary, "Mock sales response")
+        self.assertIn("Total revenue is $725.00", response.summary)
         self.assertEqual(len(response.raw_results), 1)
         self.assertGreaterEqual(response.execution_time_ms, 0)
         self.assertEqual(len(response.errors), 0)
 
     def test_planner_service_multi_agent_aggregation(self):
         registry = AgentRegistry()
-        registry.register(SalesAgent())
+        registry.register(SalesAgent(dataset_dir=FIXTURES_VALID_DIR))
         registry.register(FinanceAgent())
         planner = PlannerService(registry=registry)
 
@@ -130,7 +138,7 @@ class TestPlannerFramework(unittest.TestCase):
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.participating_agents, ["sales", "finance"])
-        self.assertIn("Mock sales response", response.summary)
+        self.assertIn("Total revenue is $725.00", response.summary)
         self.assertIn("Mock finance response", response.summary)
         self.assertEqual(len(response.raw_results), 2)
         self.assertEqual(len(response.errors), 0)
@@ -162,7 +170,7 @@ class TestPlannerFramework(unittest.TestCase):
 
     def test_planner_service_partial_agent_failure(self):
         registry = AgentRegistry()
-        registry.register(SalesAgent())
+        registry.register(SalesAgent(dataset_dir=FIXTURES_VALID_DIR))
         registry.register(FaultyAgent())
 
         class PartialRouter(SimpleTaskRouter):
