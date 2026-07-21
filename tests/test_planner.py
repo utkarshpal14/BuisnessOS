@@ -16,14 +16,17 @@ from app.planner.exceptions import (
     InvalidTaskException,
 )
 from app.agents.base import BaseAgent
-from app.agents.mock_agents import FinanceAgent
+from app.finance.agent import FinanceAgent
 from app.sales.agent import SalesAgent
 
-# Fixture dataset directory with a small, deterministic, clean sales CSV -- used so
-# these Planner integration tests don't depend on whether a real Kaggle CSV has been
-# placed in datasets/sales/ yet.
+# Fixture dataset directories with small, deterministic, clean CSVs -- used so these
+# Planner integration tests don't depend on whether real Kaggle CSVs have been placed
+# in datasets/sales/ or datasets/finance/ yet.
 FIXTURES_VALID_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "fixtures", "sales", "valid")
+)
+FIXTURES_FINANCE_VALID_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "fixtures", "finance", "valid")
 )
 
 class FaultyAgent(BaseAgent):
@@ -89,11 +92,11 @@ class TestPlannerFramework(unittest.TestCase):
         self.assertEqual(res_sales.status, "success")
         self.assertIn("Total revenue is $725.00", res_sales.summary)
 
-        finance = FinanceAgent()
+        finance = FinanceAgent(dataset_dir=FIXTURES_FINANCE_VALID_DIR)
         res_fin = finance.execute(task)
         self.assertEqual(res_fin.agent_name, "finance")
         self.assertEqual(res_fin.status, "success")
-        self.assertEqual(res_fin.summary, "Mock finance response")
+        self.assertIn("Net profit is $2,300.00", res_fin.summary)
 
     def test_simple_task_router(self):
         router = SimpleTaskRouter()
@@ -130,7 +133,7 @@ class TestPlannerFramework(unittest.TestCase):
     def test_planner_service_multi_agent_aggregation(self):
         registry = AgentRegistry()
         registry.register(SalesAgent(dataset_dir=FIXTURES_VALID_DIR))
-        registry.register(FinanceAgent())
+        registry.register(FinanceAgent(dataset_dir=FIXTURES_FINANCE_VALID_DIR))
         planner = PlannerService(registry=registry)
 
         task = PlannerTask(task_type="business", query="Comprehensive company report")
@@ -139,7 +142,7 @@ class TestPlannerFramework(unittest.TestCase):
         self.assertEqual(response.status, "success")
         self.assertEqual(response.participating_agents, ["sales", "finance"])
         self.assertIn("Total revenue is $725.00", response.summary)
-        self.assertIn("Mock finance response", response.summary)
+        self.assertIn("Net profit is $2,300.00", response.summary)
         self.assertEqual(len(response.raw_results), 2)
         self.assertEqual(len(response.errors), 0)
 
