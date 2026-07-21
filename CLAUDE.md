@@ -4,103 +4,128 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-This repository currently contains **only the specification/design docs** in `Documents/` — no `backend/` or `frontend/` code exists yet. Treat this as a from-scratch build against a finalized spec, not an existing codebase to explore for patterns.
-
-Read order for a new session: `Documents/01_Project_Vision.md` → `Documents/04_System_Architecture.md` → `Documents/10_Claude_Development_Guide.md` → `Documents/11_Decision_Log.md`. That combination is enough context to build consistently without re-deriving the architecture.
+This repository has a working backend: a Planner-orchestrated multi-agent core (Sales, Finance, Enterprise, AI Agents), a FastAPI layer over it, and a test suite (`tests/`, run with `python -m unittest discover -s tests`). There is **no frontend yet, and none of Postgres/Redis/ChromaDB/Scheduler/Sentinel/Alert Engine/full RBAC exist yet** — those are deliberately deferred (see "Deferred, seam-only" below). Read order for a new session: this file → `Documents/11_Decision_Log.md` (why things are the way they are) → `Documents/04_System_Architecture.md` / `05_Agent_Design.md` (original target vision — read with the deltas below in mind, since some details there predate what actually shipped).
 
 ## What this is
 
-BusinessOS AI: a multi-agent enterprise intelligence platform with **one Planner Agent and two entry points**:
-- **Reactive** — a user asks a question via the dashboard.
-- **Proactive** — a scheduled Enterprise Intelligence Engine detects a KPI anomaly and creates a task itself.
+BusinessOS AI: a multi-agent enterprise intelligence platform with **one Planner and multiple entry points**:
+- **Reactive** — a user asks a question (CLI `demo.py`, or the FastAPI layer).
+- **Proactive** *(deferred, not yet built)* — a scheduled Enterprise Intelligence Engine would detect a KPI anomaly and create a task itself.
 
-Both entry points hand the Planner a `Task` of identical shape; the Planner does not branch on source except to route the final result to the dashboard (reactive) or the Alert Engine (proactive, `source == "sentinel"`). This unification is the core, non-negotiable architectural decision — see "What not to do" below.
+Both entry points hand the Planner a `PlannerTask` of identical shape; the Planner does not branch on source except to route the final result differently (reactive → caller; proactive → an Alert Engine, once built). This unification is the core, non-negotiable architectural decision — see "What not to do" below. The reactive path is fully implemented today; the proactive path is intentionally not built yet, but nothing about `PlannerService` needs to change to add it later — see "Deferred, seam-only" below for exactly what plugs in where.
 
 ## Architecture (the part that spans files)
 
 ```
-Interface Layer (Next.js/React/TS/Tailwind)
-        │ user question                    Scheduler → Enterprise Intelligence Engine
-        ▼                                          │ anomaly → creates Task(source="sentinel")
-        └──────────────────► PLANNER AGENT ◄────────┘
-                                   │ decomposes, routes, merges
+Interface Layer (not yet built)         Scheduler (not yet built)
+        │ user question                          │ anomaly → Task(source="sentinel")
+        ▼                                          ▼
+        └──────────────────► PLANNER SERVICE ◄────────┘
+                                   │ routes, invokes, aggregates
                      ┌─────────────┼─────────────┬─────────────┐
-                  Sales Agent  Finance Agent   HR Agent   (Marketing/Support/Ops — stubs)
-                     └─────────────┴─────────────┴─────────────┘
-                                   │ all data access goes through here
-                          Tool Access Layer (MCP servers) — RBAC enforced HERE
-                                   │
-                     Enterprise Data (CRM/ERP/HRMS, simulated via Kaggle-style datasets)
-                                   │
-                        Response Assembly (Planner merges AgentResults)
-                          ┌────────┴────────┐
-                     Dashboard          Alert Engine (proactive only — RBAC + severity routing)
+                  Sales Agent  Finance Agent  Enterprise Agent  AI Agent
+                     └─────────────┴──────┬──────┴─────────────┘
+                                          │ all data access goes through here
+                                 Data Access Layer (per-domain gateway)
+                                          │
+                              Enterprise Data (CSV datasets today;
+                              simulated CRM/ERP, real ones later)
+                                          │
+                                 (results flow back through Planner)
+                                          │
+                          PlannerResponse (evidence-bearing, role-aware)
+                          ┌───────────────┴────────────────┐
+                     Caller (CLI/API)          Alert Engine (not yet built)
 ```
 
-Full diagram and worked examples: `Documents/04_System_Architecture.md`.
+Full original narrative diagram (predates the Enterprise/AI Agents and the current module layout): `Documents/04_System_Architecture.md`.
 
 ### Non-negotiable design constraints
-- **One Planner, two entry points.** Never build separate orchestration paths for reactive vs. proactive flows — both must call the same Planner method.
-- **RBAC is enforced at the MCP/Tool Access Layer, not the frontend or in agents.** The frontend only reflects what the backend permits; agents/routes never query `business_metrics` or other business tables directly.
-- **Agents are stateless.** Specialized agents hold no business data themselves — they retrieve fresh via MCP on every call, never cache/store it internally.
-- **Every agent implements the same interface** so the Planner can call any of them interchangeably (see `Documents/05_Agent_Design.md`):
-  ```
-  handle(task: Task, role: Role) -> AgentResult
-  Task = { id, source: "user"|"sentinel", content, context }
-  AgentResult = { summary, evidence: [{source, data_point}], confidence: "low"|"medium"|"high" }
-  ```
-- **The `evidence` field is required, not optional**, on every `AgentResult` and every Planner-merged response — this is the explainability requirement (FR-013) and a core USP, not decoration.
-- **Partial failure is expected behavior**: if a sub-agent errors or a KPI data source is unavailable, the Planner/Engine proceeds with what it has and flags the gap, rather than failing the whole request/run.
+- **One Planner, all entry points.** Never build a separate orchestration path for a new entry point (proactive, Slack, etc.) — every entry point must construct a `PlannerTask` and call `PlannerService.execute_task()`, the same method the reactive path uses.
+- **Agents never access a dataset/file/DB directly.** All data access goes through that domain's Data Access Layer gateway (`app/<domain>/data_access.py`, e.g. `SalesDataAccess`, `FinanceDataAccess`). This is the seam RBAC will later enforce against — see "Deferred, seam-only" below.
+- **Agents are stateless.** Specialized agents hold no business data themselves — they retrieve fresh via their Data Access Layer gateway on every call, never cache/store it internally.
+- **Every agent implements the same interface** (`app/agents/base.py: BaseAgent`) so the Planner can call any of them interchangeably:
+  ```python
+  class BaseAgent(ABC):
+      name: str                                        # @property
+      def execute(self, task: PlannerTask) -> AgentResult: ...
 
-### Recommended folder structure
+  PlannerTask = {
+    task_id, task_type, source: "user" | "sentinel", query,
+    role: Optional[str],       # caller's role; None until auth exists — agents/gateways must accept None
+    metadata: dict,             # includes upstream_results, populated generically by PlannerService
+    timestamp,
+  }
+
+  AgentResult = {
+    agent_name, status: "success" | "error", summary,
+    evidence: List[EvidenceItem],   # [{source, data_point}] — required, may be empty list, never omitted
+    confidence: "low" | "medium" | "high",
+    data: dict,                     # domain-specific structured payload
+    error_message: Optional[str],
+  }
+  ```
+- **The `evidence` field is required, not optional**, on every `AgentResult` — this is the explainability requirement (FR-013) and a core USP, not decoration. An agent with nothing to cite returns `evidence: []`, not a missing field.
+- **New agents register with the Planner via `app/planner/bootstrap.py`** — never special-case an agent inside `PlannerService`/`SimpleTaskRouter` internals beyond the `task_type → agent names` mapping already there.
+- **Partial failure is expected behavior**: if a sub-agent errors or a data source is unavailable, the Planner proceeds with what it has and flags the gap, rather than failing the whole request.
+
+### Deferred, seam-only (do not fully implement yet)
+These are explicitly **not** to be built out yet, but the live code already has (or Step 4/5 of the current refactor adds) the seam each one will plug into without a rewrite:
+- **PostgreSQL / Redis / ChromaDB** — no persistence exists yet. Seam: `PlannerResponse.task_id` is already the join key every future `agent_logs`/`alerts`/`audit_logs` row would use.
+- **Scheduler / Enterprise Intelligence Engine (Sentinel)** — no proactive monitoring exists yet. Seam: it would build a `PlannerTask(source="sentinel", ...)` and call the *same* `build_planner().execute_task()` the reactive path uses — no `PlannerService` change needed.
+- **Alert Engine** — no notification routing exists yet. Seam: it would consume a `PlannerResponse` where `task.source == "sentinel"`, exactly like a caller consumes one today.
+- **Full RBAC enforcement** — not implemented. Seam: `PlannerTask.role` and each domain's Data Access Layer gateway already exist so a role check can be added inside the gateway later without touching any agent or the Planner.
+- **Frontend** — do not start frontend work until the backend refactor checklist in `Documents/11_Decision_Log.md` is complete (explicit project instruction, not just a suggestion).
+
+### Recommended folder structure (current, not aspirational)
 ```
 /backend/app
-  /agents      planner.py, sales_agent.py, finance_agent.py, hr_agent.py, base_agent.py
-  /mcp         access_layer.py (RBAC-enforced), connectors/{crm,erp,hrms}_sim.py
-  /sentinel    scheduler.py, engine.py   (Enterprise Intelligence Engine)
-  /alerts      alert_engine.py
-  /api         routes_auth.py, routes_ask.py, routes_alerts.py, routes_admin.py
-  /db          models.py, seed_data.py
+  /common      keyword_mapper.py                (shared keyword-matching mechanism only)
+  /planner     models.py, registry.py, router.py, service.py, bootstrap.py, exceptions.py
+  /agents      base.py                          (shared BaseAgent contract only)
+  /sales       agent.py, analytics_service.py, data_access.py, query_mapper.py, exceptions.py
+  /finance     agent.py, analytics_service.py, data_access.py, query_mapper.py, exceptions.py
+  /enterprise  agent.py, analytics_service.py, models.py (BusinessSnapshot), query_mapper.py
+  /ai          agent.py, intelligence_service.py, llm_adapter.py
+  /api         deps.py, routes_planner.py
   main.py
-/frontend/app  login/, dashboard/, ask/, alerts/, admin/
-/frontend/components  EvidenceTrail.tsx  (shared between Ask and Alert detail views)
+/frontend      (not started)
 ```
+`/mcp`, `/sentinel`, `/alerts`, `/db` do not exist yet — see "Deferred, seam-only" above for where that logic will attach when built, and `Documents/11_Decision_Log.md` for why the folder layout moved from CLAUDE.md's original `/agents`-centric structure to one-folder-per-domain.
 
-### Build order
-DB schema → MCP access layer + RBAC → Planner skeleton → Sales Agent end-to-end → Finance/HR agents → Enterprise Intelligence Engine + scheduler → Alert Engine → frontend views → audit logging wired across all of the above. Access control is built before the agents that depend on it, deliberately — see decision #9 in `Documents/11_Decision_Log.md`.
+### Build order (what's actually happened, and what's next)
+Done: Planner skeleton → Sales Agent → Finance Agent → Enterprise Agent → AI Agent → FastAPI layer → contract redesign (role/evidence/confidence) → Data Access Layer seam → shared bootstrap → generic Enterprise aggregation → consolidated query/routing logic.
+Next (in order, before frontend): none currently blocking — frontend may begin once `Documents/11_Decision_Log.md`'s refactor checklist shows complete.
+Future (post-frontend or as needed): DB/Redis/ChromaDB persistence, Scheduler + Sentinel, Alert Engine, full RBAC enforcement, auth/login.
 
 ## Coding conventions
 - Python backend: FastAPI + Pydantic models for every request/response shape; type hints throughout.
-- TypeScript frontend: types for API responses should mirror `Documents/06_API_Specification.md` exactly.
-- New specialized agents register with the Planner via the shared interface/config — never special-case an agent inside Planner internals.
-- `business_metrics.source` values (e.g. `"sales_crm_sim"`) map to which simulated dataset backs them — keep this explicit so a real CRM/ERP connector can later replace the simulation without a schema change.
+- TypeScript frontend (once started): types for API responses should mirror the FastAPI `response_model`s exactly (not `Documents/06_API_Specification.md`, which predates the live endpoint surface — see Decision Log).
+- New specialized agents register with the Planner via `app/planner/bootstrap.py` — never special-case an agent inside Planner internals.
+- Keep each domain's Data Access Layer gateway (`data_access.py`) as the only file in that domain allowed to touch a filesystem/CSV/future DB connection.
 
-## Data layer
-Three stores, each for a distinct reason (see `Documents/07_Database_Design.md` for full schema):
-- **PostgreSQL** — users, roles (with `permissions` jsonb checked by MCP), alerts, `business_metrics`, `agent_logs`, `audit_logs`, `knowledge_base` metadata.
-- **Redis** — cache for frequent reads (dashboard, sessions).
-- **ChromaDB** — vector store for RAG over unstructured knowledge; `knowledge_base` table holds the source-of-truth text and a `chroma_ref_id` pointer.
-
-`agent_logs.task_id` is the thread that ties one full Planner run together with its resulting `alerts` and `audit_logs` rows — preserve this linkage in any new table that records a Planner-triggered side effect.
-
-## Commands (once code exists)
+## Commands
 ```bash
 # Backend
 cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload
 
-# Frontend
-cd frontend && npm install && npm run dev
-```
-Required `backend/.env`: `ANTHROPIC_API_KEY`, `DATABASE_URL`, `REDIS_URL`, `CHROMA_DB_PATH`.
+# Tests
+python -m unittest discover -s tests
 
-No test/lint/build tooling is defined yet — establish it (pytest for backend, the frontend framework's standard lint/test scripts) as part of scaffolding, and update this file once commands exist.
+# Unified CLI
+python demo.py
+```
+No `.env`/API keys are required yet — nothing in the live code calls an external API or a real database. `backend/requirements.txt` reflects only what's actually imported; add a dependency there only when you start using it.
 
 ## What NOT to do
-- Don't build two separate orchestration paths for reactive vs. proactive — they must share the Planner.
-- Don't implement RBAC filtering only in the frontend, or fetch data as a generic "system" identity and filter afterward — filter at the MCP source using the caller's actual role.
+- Don't build a separate orchestration path for a new entry point — it must call `PlannerService.execute_task()`.
+- Don't let an agent read a CSV/file/DB directly — go through that domain's Data Access Layer gateway.
 - Don't let specialized agents cache or store business data themselves.
-- Don't skip the evidence/explainability field on responses.
-- Don't propose a redesign of the reactive/proactive split — it's finalized (see `Documents/11_Decision_Log.md` for why) unless explicitly asked to revisit it.
+- Don't skip the `evidence`/`confidence` fields on an `AgentResult` — return `evidence: []` if there's genuinely nothing to cite, never omit the field.
+- Don't hardcode another domain's field names inside `EnterpriseAgent`/`EnterpriseAnalyticsService` — it must aggregate whatever domains are present in `upstream_results` generically.
+- Don't duplicate agent-registry construction — always build a `PlannerService` via `app/planner/bootstrap.py`.
+- Don't implement Postgres/Redis/ChromaDB/Scheduler/Sentinel/Alert Engine/full RBAC without a corresponding Decision Log entry explaining why the deferral ended.
+- Don't start frontend work before the current backend refactor checklist is complete.
 
 ## When a significant new decision is made
 Add a row to `Documents/11_Decision_Log.md` (decision + reasoning), not just a diagram update — this is what lets a future session understand *why*, not just *what*.

@@ -1,5 +1,7 @@
 # BusinessOS AI — Finalized System Architecture
 
+> **Status note (see `Documents/11_Decision_Log.md`):** this document is the original target vision and is still correct on the *why* (one Planner/two entry points, RBAC at the data layer, stateless agents, evidence-first). For the *current, as-built* module layout, agent interface, and what's deliberately deferred vs. done, read `CLAUDE.md` first — some specifics below (folder names, MCP-as-a-literal-server, "Business Sentinel Agent") predate the Enterprise/AI Agents and the per-domain module structure that actually shipped.
+
 *This document locks down the architecture that was being debated in the earlier discussion (reactive vs. proactive flows, Business Sentinel Agent, etc.) into one final, unambiguous design. Use this as the single source of truth going forward — including when briefing Claude/your team to start building.*
 
 ---

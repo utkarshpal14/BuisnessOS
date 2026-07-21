@@ -1,5 +1,7 @@
 # BusinessOS AI — Agent Design Document
 
+> **Status note (see `Documents/11_Decision_Log.md`):** the `handle(task, role)` signature and `Task`/`AgentResult` shapes below are the original design intent. The as-built interface lives in `app/agents/base.py` / `app/planner/models.py` and is kept in sync with this intent (role, evidence, confidence) as of the backend architecture refactor — see `CLAUDE.md` for the exact, current field names. HR/Marketing/Support/Operations agents described below remain unbuilt; only Sales, Finance, Enterprise, and AI Agents exist today.
+
 ## Common agent interface
 Every agent (Planner, Sales, Finance, HR, Marketing, Support, Ops) should implement the same basic shape so the Planner can call any of them interchangeably:
 

@@ -5,11 +5,16 @@ FinanceAnalyticsService method name. No LLM involved -- first matching rule wins
 Rule order matters: more specific phrases ("profit margin", "monthly profit",
 "revenue vs expenses") must be checked before the generic "profit"/"expenses" keywords
 that would otherwise shadow them.
+
+The matching mechanism is shared (app.common.keyword_mapper.KeywordMapper) with
+Sales' and Enterprise's query mappers; only this rules table is finance-specific.
 """
 from typing import List, Tuple
 
+from app.common.keyword_mapper import KeywordMapper
+
 QUERY_RULES: List[Tuple[List[str], str]] = [
-    (["summary", "overview"], "summary"),
+    (["summary", "overview", "dashboard", "health"], "summary"),
     (["profit margin", "margin"], "profit_margin"),
     (["revenue vs expenses", "revenue and expenses", "revenue versus expenses"], "revenue_vs_expenses"),
     (["monthly profit", "monthly"], "monthly_profit"),
@@ -23,9 +28,8 @@ DEFAULT_INTENT = "summary"
 class FinanceQueryMapper:
     """Maps a raw query string to a FinanceAnalyticsService method name via keyword matching."""
 
+    def __init__(self):
+        self._mapper = KeywordMapper(QUERY_RULES, DEFAULT_INTENT)
+
     def resolve(self, query: str) -> str:
-        normalized = (query or "").lower()
-        for keywords, intent in QUERY_RULES:
-            if any(keyword in normalized for keyword in keywords):
-                return intent
-        return DEFAULT_INTENT
+        return self._mapper.resolve(query)

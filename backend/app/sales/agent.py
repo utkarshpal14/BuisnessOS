@@ -10,9 +10,9 @@ rather than caching a DataFrame on the instance, per the project's no-agent-cach
 from typing import Any, Dict, Optional
 
 from app.agents.base import BaseAgent
-from app.planner.models import AgentResult, PlannerTask
+from app.planner.models import AgentResult, EvidenceItem, PlannerTask
 from app.sales.analytics_service import SalesAnalyticsService
-from app.sales.data_loader import SalesDataLoader
+from app.sales.data_access import SalesDataAccess
 from app.sales.exceptions import SalesDataError
 from app.sales.query_mapper import SalesQueryMapper
 
@@ -21,7 +21,7 @@ class SalesAgent(BaseAgent):
     """Real Sales Intelligence Agent: dataset-backed KPI analysis, no LLM calls."""
 
     def __init__(self, dataset_dir: Optional[str] = None):
-        self._data_loader = SalesDataLoader(dataset_dir=dataset_dir)
+        self._data_access = SalesDataAccess(dataset_dir=dataset_dir)
         self._query_mapper = SalesQueryMapper()
 
     @property
@@ -30,7 +30,10 @@ class SalesAgent(BaseAgent):
 
     def execute(self, task: PlannerTask) -> AgentResult:
         try:
-            clean_data = self._data_loader.load()
+            # Never touches SalesDataLoader/pandas/the filesystem directly --
+            # goes through the Data Access Layer gateway, which is where a role
+            # check will be added once RBAC exists.
+            clean_data = self._data_access.load(role=task.role)
         except SalesDataError as e:
             return self._error_result(str(e))
         except Exception as e:  # never let a dataset problem crash the Planner
@@ -46,6 +49,8 @@ class SalesAgent(BaseAgent):
                 agent_name=self.name,
                 status="success",
                 summary=summary,
+                evidence=[EvidenceItem(source="sales_query_mapper", data_point="Query did not match a known sales KPI.")],
+                confidence="low",
                 data={
                     "agent": "sales",
                     "status": "success",
@@ -66,6 +71,8 @@ class SalesAgent(BaseAgent):
             agent_name=self.name,
             status="success",
             summary=summary,
+            evidence=[EvidenceItem(source=f"sales_dataset:{intent}", data_point=summary)],
+            confidence="high",
             data={
                 "agent": "sales",
                 "status": "success",
@@ -80,6 +87,7 @@ class SalesAgent(BaseAgent):
             agent_name=self.name,
             status="error",
             summary="Sales analysis unavailable.",
+            confidence="low",
             error_message=message,
             data={"agent": "sales", "status": "error", "summary": "Sales analysis unavailable."},
         )

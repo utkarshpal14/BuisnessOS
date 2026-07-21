@@ -1,12 +1,17 @@
 """
 SalesQueryMapper: plain keyword matching from a natural-language query string onto a
 SalesAnalyticsService method name. No LLM involved -- first matching rule wins.
+
+The matching mechanism is shared (app.common.keyword_mapper.KeywordMapper) with
+Finance's and Enterprise's query mappers; only this rules table is sales-specific.
 """
 from typing import List, Tuple
 
+from app.common.keyword_mapper import KeywordMapper
+
 # (keywords, SalesAnalyticsService method name) -- order matters, first match wins.
 QUERY_RULES: List[Tuple[List[str], str]] = [
-    (["summary", "overview"], "summary"),
+    (["summary", "overview", "dashboard", "health"], "summary"),
     (["average order value", "aov"], "average_order_value"),
     (["total revenue", "revenue"], "total_revenue"),
     (["total orders", "order count", "number of orders", "orders"], "total_orders"),
@@ -24,9 +29,8 @@ DEFAULT_INTENT = "unknown"
 class SalesQueryMapper:
     """Maps a raw query string to a SalesAnalyticsService method name via keyword matching."""
 
+    def __init__(self):
+        self._mapper = KeywordMapper(QUERY_RULES, DEFAULT_INTENT)
+
     def resolve(self, query: str) -> str:
-        normalized = (query or "").lower()
-        for keywords, intent in QUERY_RULES:
-            if any(keyword in normalized for keyword in keywords):
-                return intent
-        return DEFAULT_INTENT
+        return self._mapper.resolve(query)

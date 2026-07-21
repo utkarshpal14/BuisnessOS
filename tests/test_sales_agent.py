@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from app.planner.models import PlannerTask
 from app.sales.agent import SalesAgent
 from app.sales.analytics_service import SalesAnalyticsService
+from app.sales.data_access import SalesDataAccess
 from app.sales.data_loader import SalesDataLoader
 from app.sales.exceptions import DatasetNotFoundError, EmptyDatasetError, SchemaValidationError
 from app.sales.query_mapper import SalesQueryMapper
@@ -44,6 +45,29 @@ class TestSalesDataLoader(unittest.TestCase):
         # 4 rows in the fixture; 2 are malformed (bad date, non-numeric quantity) and dropped.
         self.assertEqual(len(df), 2)
         self.assertAlmostEqual(float(df["revenue"].sum()), 150.0, places=2)
+
+
+class TestSalesDataAccess(unittest.TestCase):
+    """The gateway SalesAgent depends on -- never SalesDataLoader directly."""
+
+    def test_load_returns_same_data_as_the_underlying_loader(self):
+        gateway = SalesDataAccess(dataset_dir=VALID_DIR)
+        df = gateway.load()
+        self.assertEqual(len(df), 6)
+        self.assertAlmostEqual(float(df["revenue"].sum()), 725.0, places=2)
+
+    def test_load_accepts_a_role_without_erroring(self):
+        # No RBAC exists yet -- role is accepted and currently ignored, but the
+        # gateway must not reject or require it.
+        gateway = SalesDataAccess(dataset_dir=VALID_DIR)
+        df_no_role = gateway.load()
+        df_with_role = gateway.load(role="CEO")
+        self.assertEqual(len(df_no_role), len(df_with_role))
+
+    def test_load_propagates_missing_dataset_error(self):
+        gateway = SalesDataAccess(dataset_dir=MISSING_DIR)
+        with self.assertRaises(DatasetNotFoundError):
+            gateway.load()
 
 
 class TestSalesAnalyticsService(unittest.TestCase):
@@ -128,6 +152,9 @@ class TestSalesAgent(unittest.TestCase):
         self.assertIn("$725.00", result.summary)
         self.assertEqual(result.data["agent"], "sales")
         self.assertEqual(result.data["kpi"], "total_revenue")
+        self.assertEqual(result.confidence, "high")
+        self.assertTrue(len(result.evidence) >= 1)
+        self.assertIn("total_revenue", result.evidence[0].source)
 
     def test_execute_handles_missing_dataset_gracefully(self):
         agent = SalesAgent(dataset_dir=MISSING_DIR)
@@ -136,6 +163,8 @@ class TestSalesAgent(unittest.TestCase):
 
         self.assertEqual(result.status, "error")
         self.assertIsNotNone(result.error_message)
+        self.assertEqual(result.confidence, "low")
+        self.assertEqual(result.evidence, [])
 
     def test_execute_handles_invalid_schema_gracefully(self):
         agent = SalesAgent(dataset_dir=INVALID_SCHEMA_DIR)
@@ -159,6 +188,13 @@ class TestSalesAgent(unittest.TestCase):
         self.assertEqual(result.status, "success")
         self.assertEqual(result.data["kpi"], "unknown")
         self.assertIn("I couldn't understand the requested sales KPI", result.summary)
+        self.assertEqual(result.confidence, "low")
+
+    def test_agent_depends_on_the_data_access_gateway_not_the_raw_loader(self):
+        agent = SalesAgent(dataset_dir=VALID_DIR)
+        self.assertTrue(hasattr(agent, "_data_access"))
+        self.assertIsInstance(agent._data_access, SalesDataAccess)
+        self.assertFalse(hasattr(agent, "_data_loader"))
 
     def test_execute_is_stateless_across_calls(self):
         agent = SalesAgent(dataset_dir=VALID_DIR)

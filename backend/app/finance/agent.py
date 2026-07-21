@@ -11,9 +11,9 @@ rather than caching a DataFrame on the instance, per the project's no-agent-cach
 from typing import Any, Dict, Optional
 
 from app.agents.base import BaseAgent
-from app.planner.models import AgentResult, PlannerTask
+from app.planner.models import AgentResult, EvidenceItem, PlannerTask
 from app.finance.analytics_service import FinanceAnalyticsService
-from app.finance.data_loader import FinanceDataLoader
+from app.finance.data_access import FinanceDataAccess
 from app.finance.exceptions import FinanceDataError
 from app.finance.query_mapper import FinanceQueryMapper
 
@@ -22,7 +22,7 @@ class FinanceAgent(BaseAgent):
     """Real Finance Intelligence Agent: dataset-backed KPI analysis, no LLM calls."""
 
     def __init__(self, dataset_dir: Optional[str] = None):
-        self._data_loader = FinanceDataLoader(dataset_dir=dataset_dir)
+        self._data_access = FinanceDataAccess(dataset_dir=dataset_dir)
         self._query_mapper = FinanceQueryMapper()
 
     @property
@@ -31,7 +31,10 @@ class FinanceAgent(BaseAgent):
 
     def execute(self, task: PlannerTask) -> AgentResult:
         try:
-            clean_data = self._data_loader.load()
+            # Never touches FinanceDataLoader/pandas/the filesystem directly --
+            # goes through the Data Access Layer gateway, which is where a role
+            # check will be added once RBAC exists.
+            clean_data = self._data_access.load(role=task.role)
         except FinanceDataError as e:
             return self._error_result(str(e))
         except Exception as e:  # never let a dataset problem crash the Planner
@@ -50,6 +53,8 @@ class FinanceAgent(BaseAgent):
             agent_name=self.name,
             status="success",
             summary=summary,
+            evidence=[EvidenceItem(source=f"finance_dataset:{intent}", data_point=summary)],
+            confidence="high",
             data={
                 "agent": "finance",
                 "status": "success",
@@ -64,6 +69,7 @@ class FinanceAgent(BaseAgent):
             agent_name=self.name,
             status="error",
             summary="Finance analysis unavailable.",
+            confidence="low",
             error_message=message,
             data={"agent": "finance", "status": "error", "summary": "Finance analysis unavailable."},
         )

@@ -1,8 +1,9 @@
 """
-Agents package for BusinessOS AI
-"""
-from app.agents.base import BaseAgent
-from app.finance.agent import FinanceAgent
-from app.sales.agent import SalesAgent
+Shared agent contract for BusinessOS AI.
 
-__all__ = ["BaseAgent", "SalesAgent", "FinanceAgent"]
+Holds only base.py: the BaseAgent interface every domain agent (SalesAgent in
+app.sales, FinanceAgent in app.finance, EnterpriseAgent in app.enterprise, AIAgent
+in app.ai) implements. Domain agents live in their own per-domain package, not here.
+"""
+
+__all__ = ["BaseAgent"]

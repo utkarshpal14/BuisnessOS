@@ -5,7 +5,7 @@ import unittest
 # Ensure backend package directory is on Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))
 
-from app.planner.models import PlannerTask, PlannerResponse, AgentResult
+from app.planner.models import PlannerTask, PlannerResponse, AgentResult, EvidenceItem
 from app.planner.registry import AgentRegistry
 from app.planner.router import SimpleTaskRouter
 from app.planner.service import PlannerService
@@ -84,7 +84,7 @@ class TestPlannerFramework(unittest.TestCase):
             registry.get("non_existent")
 
     def test_mock_agents_execution(self):
-        task = PlannerTask(task_type="sales", query="Show Q3 pipeline")
+        task = PlannerTask(task_type="sales", query="Show Q3 summary")
 
         sales = SalesAgent(dataset_dir=FIXTURES_VALID_DIR)
         res_sales = sales.execute(task)
@@ -119,7 +119,7 @@ class TestPlannerFramework(unittest.TestCase):
         registry.register(SalesAgent(dataset_dir=FIXTURES_VALID_DIR))
         planner = PlannerService(registry=registry)
 
-        task = PlannerTask(task_type="sales", query="Get sales report")
+        task = PlannerTask(task_type="sales", query="Get sales summary report")
         response = planner.execute_task(task)
 
         self.assertEqual(response.task_id, task.task_id)
@@ -136,7 +136,7 @@ class TestPlannerFramework(unittest.TestCase):
         registry.register(FinanceAgent(dataset_dir=FIXTURES_FINANCE_VALID_DIR))
         planner = PlannerService(registry=registry)
 
-        task = PlannerTask(task_type="business", query="Comprehensive company report")
+        task = PlannerTask(task_type="business", query="Comprehensive company summary report")
         response = planner.execute_task(task)
 
         self.assertEqual(response.status, "success")
@@ -188,6 +188,34 @@ class TestPlannerFramework(unittest.TestCase):
         self.assertEqual(response.participating_agents, ["sales", "faulty"])
         self.assertEqual(len(response.errors), 1)
         self.assertIn("Unhandled exception in agent 'faulty'", response.errors[0])
+
+    def test_planner_task_role_defaults_to_none(self):
+        task = PlannerTask(task_type="sales", query="Total revenue")
+        self.assertIsNone(task.role)
+        # Explicit role is accepted -- no auth enforces it yet, but the field exists
+        # so a Data Access Layer gateway can check it once auth is added.
+        task_with_role = PlannerTask(task_type="sales", query="Total revenue", role="CEO")
+        self.assertEqual(task_with_role.role, "CEO")
+
+    def test_agent_result_evidence_and_confidence_defaults(self):
+        result = AgentResult(agent_name="x", summary="ok")
+        self.assertEqual(result.evidence, [])
+        self.assertEqual(result.confidence, "medium")
+
+    def test_planner_response_merges_evidence_across_agents(self):
+        registry = AgentRegistry()
+        registry.register(SalesAgent(dataset_dir=FIXTURES_VALID_DIR))
+        registry.register(FinanceAgent(dataset_dir=FIXTURES_FINANCE_VALID_DIR))
+        planner = PlannerService(registry=registry)
+
+        task = PlannerTask(task_type="business", query="Comprehensive company summary report")
+        response = planner.execute_task(task)
+
+        self.assertGreaterEqual(len(response.evidence), 2)
+        self.assertTrue(all(isinstance(item, EvidenceItem) for item in response.evidence))
+        sources = [item.source for item in response.evidence]
+        self.assertTrue(any(s.startswith("sales_dataset") for s in sources))
+        self.assertTrue(any(s.startswith("finance_dataset") for s in sources))
 
     def test_planner_service_invalid_task_empty_query(self):
         registry = AgentRegistry()

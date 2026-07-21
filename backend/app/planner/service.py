@@ -1,7 +1,7 @@
 import logging
 import time
-from typing import Optional, List
-from app.planner.models import PlannerTask, PlannerResponse, AgentResult
+from typing import Optional, List, Dict
+from app.planner.models import PlannerTask, PlannerResponse, AgentResult, EvidenceItem
 from app.planner.registry import AgentRegistry
 from app.planner.router import TaskRouter, SimpleTaskRouter
 from app.planner.exceptions import (
@@ -80,14 +80,21 @@ class PlannerService:
 
         # Agent Invocation
         successful_agent_count = 0
+        completed_results: Dict[str, dict] = {}
+        merged_evidence: List[EvidenceItem] = []
         for agent_name in target_agent_names:
             try:
                 agent = self.registry.get(agent_name)
                 logger.info(f"Agent invoked: task_id={task.task_id}, agent={agent_name}")
                 participating_agents.append(agent_name)
-                
+
+                # Generic hand-off: any agent invoked later in this run can read the
+                # structured results of agents that already ran, without those agents
+                # knowing about each other or re-fetching data themselves.
+                task.metadata["upstream_results"] = dict(completed_results)
+
                 result = agent.execute(task)
-                
+
                 if result.status == "success":
                     successful_agent_count += 1
                     logger.info(f"Agent completed: task_id={task.task_id}, agent={agent_name}, status=success")
@@ -95,11 +102,15 @@ class PlannerService:
                     logger.warning(f"Agent completed with error: task_id={task.task_id}, agent={agent_name}")
                     if result.error_message:
                         errors.append(f"Agent '{agent_name}' error: {result.error_message}")
-                
+
                 if result.summary:
                     summaries.append(result.summary)
-                
-                raw_results.append(result.model_dump() if hasattr(result, "model_dump") else result.dict())
+
+                merged_evidence.extend(result.evidence)
+
+                result_dict = result.model_dump() if hasattr(result, "model_dump") else result.dict()
+                raw_results.append(result_dict)
+                completed_results[agent_name] = result_dict
 
             except AgentNotFoundException as e:
                 logger.error(f"Agent invocation failed: task_id={task.task_id}, agent={agent_name}, error={str(e)}")
@@ -131,6 +142,7 @@ class PlannerService:
             status=overall_status,
             participating_agents=participating_agents,
             summary=merged_summary,
+            evidence=merged_evidence,
             raw_results=raw_results,
             execution_time_ms=elapsed_ms,
             errors=errors

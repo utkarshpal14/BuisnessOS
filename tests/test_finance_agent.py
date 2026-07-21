@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from app.planner.models import PlannerTask
 from app.finance.agent import FinanceAgent
 from app.finance.analytics_service import FinanceAnalyticsService
+from app.finance.data_access import FinanceDataAccess
 from app.finance.data_loader import FinanceDataLoader
 from app.finance.exceptions import DatasetNotFoundError, EmptyDatasetError, SchemaValidationError
 from app.finance.query_mapper import FinanceQueryMapper
@@ -44,6 +45,27 @@ class TestFinanceDataLoader(unittest.TestCase):
         # 4 rows in the fixture; 2 are malformed (bad date, non-numeric expenses) and dropped.
         self.assertEqual(len(df), 2)
         self.assertAlmostEqual(float(df["profit"].sum()), 1200.0, places=2)
+
+
+class TestFinanceDataAccess(unittest.TestCase):
+    """The gateway FinanceAgent depends on -- never FinanceDataLoader directly."""
+
+    def test_load_returns_same_data_as_the_underlying_loader(self):
+        gateway = FinanceDataAccess(dataset_dir=VALID_DIR)
+        df = gateway.load()
+        self.assertEqual(len(df), 4)
+        self.assertAlmostEqual(float(df["profit"].sum()), 2300.0, places=2)
+
+    def test_load_accepts_a_role_without_erroring(self):
+        gateway = FinanceDataAccess(dataset_dir=VALID_DIR)
+        df_no_role = gateway.load()
+        df_with_role = gateway.load(role="CFO")
+        self.assertEqual(len(df_no_role), len(df_with_role))
+
+    def test_load_propagates_missing_dataset_error(self):
+        gateway = FinanceDataAccess(dataset_dir=MISSING_DIR)
+        with self.assertRaises(DatasetNotFoundError):
+            gateway.load()
 
 
 class TestFinanceAnalyticsService(unittest.TestCase):
@@ -117,6 +139,9 @@ class TestFinanceAgent(unittest.TestCase):
         self.assertIn("$2,300.00", result.summary)
         self.assertEqual(result.data["agent"], "finance")
         self.assertEqual(result.data["kpi"], "net_profit")
+        self.assertEqual(result.confidence, "high")
+        self.assertTrue(len(result.evidence) >= 1)
+        self.assertIn("net_profit", result.evidence[0].source)
 
     def test_execute_handles_missing_dataset_gracefully(self):
         agent = FinanceAgent(dataset_dir=MISSING_DIR)
@@ -125,6 +150,8 @@ class TestFinanceAgent(unittest.TestCase):
 
         self.assertEqual(result.status, "error")
         self.assertIsNotNone(result.error_message)
+        self.assertEqual(result.confidence, "low")
+        self.assertEqual(result.evidence, [])
 
     def test_execute_handles_invalid_schema_gracefully(self):
         agent = FinanceAgent(dataset_dir=INVALID_SCHEMA_DIR)
@@ -139,6 +166,12 @@ class TestFinanceAgent(unittest.TestCase):
         result = agent.execute(task)
 
         self.assertEqual(result.status, "error")
+
+    def test_agent_depends_on_the_data_access_gateway_not_the_raw_loader(self):
+        agent = FinanceAgent(dataset_dir=VALID_DIR)
+        self.assertTrue(hasattr(agent, "_data_access"))
+        self.assertIsInstance(agent._data_access, FinanceDataAccess)
+        self.assertFalse(hasattr(agent, "_data_loader"))
 
     def test_execute_is_stateless_across_calls(self):
         agent = FinanceAgent(dataset_dir=VALID_DIR)

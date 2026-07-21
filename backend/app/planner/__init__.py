@@ -1,17 +1,7 @@
 """
 Planner Framework Package
 """
-from app.planner.models import PlannerTask, PlannerResponse, AgentResult
-from app.planner.exceptions import (
-    PlannerException,
-    AgentNotFoundException,
-    DuplicateAgentException,
-    UnknownTaskTypeException,
-    InvalidTaskException,
-)
-from app.planner.registry import AgentRegistry
-from app.planner.router import TaskRouter, SimpleTaskRouter
-from app.planner.service import PlannerService
+from importlib import import_module
 
 __all__ = [
     "PlannerTask",
@@ -27,3 +17,24 @@ __all__ = [
     "SimpleTaskRouter",
     "PlannerService",
 ]
+
+
+def __getattr__(name: str):
+    module_map = {
+        "PlannerTask": "app.planner.models",
+        "PlannerResponse": "app.planner.models",
+        "AgentResult": "app.planner.models",
+        "PlannerException": "app.planner.exceptions",
+        "AgentNotFoundException": "app.planner.exceptions",
+        "DuplicateAgentException": "app.planner.exceptions",
+        "UnknownTaskTypeException": "app.planner.exceptions",
+        "InvalidTaskException": "app.planner.exceptions",
+        "AgentRegistry": "app.planner.registry",
+        "TaskRouter": "app.planner.router",
+        "SimpleTaskRouter": "app.planner.router",
+        "PlannerService": "app.planner.service",
+    }
+    if name in module_map:
+        module = import_module(module_map[name])
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
