@@ -1,0 +1,12 @@
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic>=2.0
+sqlalchemy>=2.0
+psycopg2-binary>=2.9.6
+redis>=4.6.0
+chromadb>=0.4.0
+python-dotenv>=1.0.0
+langchain>=0.0.250
+langgraph>=0.0.10
+anthropic>=0.3.0
+pandas>=2.0.0
