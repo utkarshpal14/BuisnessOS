@@ -17,12 +17,16 @@ QUERY_RULES: List[Tuple[List[str], str]] = [
     (["summary", "overview", "dashboard", "health"], "summary"),
     (["profit margin", "margin"], "profit_margin"),
     (["revenue vs expenses", "revenue and expenses", "revenue versus expenses"], "revenue_vs_expenses"),
+    (["profit growth", "growth", "trend"], "profit_growth"),
+    (["daily profit", "daily"], "daily_profit"),
     (["monthly profit", "monthly"], "monthly_profit"),
+    (["profit by region", "region"], "profit_by_region"),
+    (["top expense categories", "expense categories", "top categories", "category"], "top_expense_categories"),
     (["total expenses", "expenses", "cost"], "total_expenses"),
     (["net profit", "profit"], "net_profit"),
 ]
 
-DEFAULT_INTENT = "summary"
+DEFAULT_INTENT = "unknown"
 
 
 class FinanceQueryMapper:

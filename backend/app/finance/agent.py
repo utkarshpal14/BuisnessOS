@@ -41,6 +41,25 @@ class FinanceAgent(BaseAgent):
             return self._error_result(f"Unexpected error loading finance dataset: {e}")
 
         intent = self._query_mapper.resolve(task.query)
+        if intent == "unknown":
+            summary = (
+                "I couldn't understand the requested finance KPI. "
+                "Try queries like 'Net profit', 'Profit margin', or 'Revenue vs expenses'."
+            )
+            return AgentResult(
+                agent_name=self.name,
+                status="success",
+                summary=summary,
+                evidence=[EvidenceItem(source="finance_query_mapper", data_point="Query did not match a known finance KPI.")],
+                confidence="low",
+                data={
+                    "agent": "finance",
+                    "status": "success",
+                    "summary": summary,
+                    "kpi": intent,
+                },
+            )
+
         service = FinanceAnalyticsService(clean_data)
 
         try:
@@ -96,6 +115,25 @@ class FinanceAgent(BaseAgent):
                 f"Latest month ({latest['month']}): revenue ${latest['revenue']:,.2f} "
                 f"vs. expenses ${latest['expenses']:,.2f}."
             )
+        if intent == "daily_profit":
+            return f"Daily profit tracked across {data['days_covered']} day(s)."
+        if intent == "profit_by_region":
+            if not data.get("available"):
+                return data.get("message", "Regional breakdown unavailable.")
+            top = data["profit_by_region"][0]
+            return f"Top region by profit is {top['region']} (${top['profit']:,.2f})."
+        if intent == "top_expense_categories":
+            if not data.get("available"):
+                return data.get("message", "Top expense categories unavailable.")
+            top = data["top_expense_categories"][0]
+            return f"Top expense category is {top['category']} (${top['expenses']:,.2f})."
+        if intent == "profit_growth":
+            growth = [m for m in data["profit_growth"] if m["growth_pct"] is not None]
+            if not growth:
+                return "Not enough monthly history to compute profit growth yet."
+            latest = growth[-1]
+            direction = "up" if latest["growth_pct"] >= 0 else "down"
+            return f"Profit is {direction} {abs(latest['growth_pct'])}% in {latest['month']} vs. the prior month."
         if intent == "summary":
             parts = [
                 f"Net profit is ${data['net_profit']:,.2f}",
@@ -106,5 +144,9 @@ class FinanceAgent(BaseAgent):
             if "latest_month_profit" in data:
                 latest = data["latest_month_profit"]
                 parts.append(f"Latest month ({latest['month']}) profit: ${latest['profit']:,.2f}.")
+            if "top_region" in data:
+                parts.append(f"Top region: {data['top_region']['region']}.")
+            if "top_expense_category" in data:
+                parts.append(f"Top expense category: {data['top_expense_category']['category']}.")
             return " ".join(parts)
         return "Finance KPI computed."

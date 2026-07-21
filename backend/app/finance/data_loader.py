@@ -22,11 +22,11 @@ from app.finance.exceptions import (
 # that should be recognized as that column. Extend this when pointing at a new dataset.
 COLUMN_ALIASES: Dict[str, List[str]] = {
     "date": ["date", "transaction_date", "period", "month", "record_date", "posting_date"],
-    "revenue": ["revenue", "sales", "income", "total_revenue", "gross_revenue"],
-    "expenses": ["expenses", "expense", "cost", "costs", "total_expenses", "cogs", "cost_of_goods_sold"],
+    "revenue": ["revenue","sales","gross sales","gross_sales","grosssales","income","total_revenue","gross_revenue"],
+    "expenses": ["expenses","expense","cost","costs","total_expenses","cogs","cost_of_goods_sold","cost of goods sold"],
     "profit": ["profit", "net_profit", "net_income", "earnings"],
-    "category": ["category", "expense_category", "department", "cost_center"],
-    "region": ["region", "state", "area", "territory", "market"],
+    "category": ["category","segment","product", "expense_category", "department", "cost_center"],
+    "region": ["region","country", "state", "area", "territory", "market"],
 }
 
 REQUIRED_CANONICAL_COLUMNS = ("date",)
@@ -35,7 +35,7 @@ DEFAULT_DATASET_DIR = Path(__file__).resolve().parents[3] / "datasets" / "financ
 
 
 def _normalize(name: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+    return re.sub(r"[^a-z0-9]", "", str(name).strip().lower())
 
 
 class FinanceDataLoader:
@@ -125,6 +125,24 @@ class FinanceDataLoader:
         keep_cols = [c for c in renamed.columns if c in COLUMN_ALIASES]
         return renamed[keep_cols].copy()
 
+    @staticmethod
+    def _parse_money_value(value: object) -> Optional[float]:
+        if pd.isna(value):
+            return None
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        cleaned = re.sub(r"[^0-9.\-+]", "", text)
+        if not cleaned:
+            return None
+
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+
     def _clean(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
 
@@ -132,7 +150,10 @@ class FinanceDataLoader:
 
         for money_col in ("revenue", "expenses", "profit"):
             if money_col in df.columns:
-                df[money_col] = pd.to_numeric(df[money_col], errors="coerce")
+                df[money_col] = pd.to_numeric(
+                    df[money_col].apply(self._parse_money_value),
+                    errors="coerce",
+                )
 
         if "revenue" not in df.columns:
             df["revenue"] = df["expenses"] + df["profit"]

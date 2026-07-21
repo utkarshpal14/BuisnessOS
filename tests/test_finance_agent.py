@@ -104,6 +104,29 @@ class TestFinanceAnalyticsService(unittest.TestCase):
         summary = self.service.summary()
         self.assertAlmostEqual(summary["net_profit"], 2300.0, places=2)
         self.assertEqual(summary["latest_month_profit"]["month"], "2023-02")
+        self.assertEqual(summary["top_region"]["region"], "South")
+        self.assertEqual(summary["top_expense_category"]["category"], "Marketing")
+
+    def test_daily_profit(self):
+        result = self.service.daily_profit()
+        self.assertEqual(result["days_covered"], 4)
+
+    def test_profit_by_region(self):
+        result = self.service.profit_by_region()
+        self.assertTrue(result["available"])
+        self.assertEqual(result["profit_by_region"][0]["region"], "South")
+        self.assertAlmostEqual(result["profit_by_region"][0]["profit"], 1400.0, places=2)
+
+    def test_top_expense_categories(self):
+        result = self.service.top_expense_categories()
+        self.assertTrue(result["available"])
+        self.assertEqual(result["top_expense_categories"][0]["category"], "Marketing")
+        self.assertAlmostEqual(result["top_expense_categories"][0]["expenses"], 1900.0, places=2)
+
+    def test_profit_growth(self):
+        growth = self.service.profit_growth()["profit_growth"]
+        self.assertIsNone(growth[0]["growth_pct"])
+        self.assertAlmostEqual(growth[1]["growth_pct"], 30.0, places=2)
 
 
 class TestFinanceQueryMapper(unittest.TestCase):
@@ -119,12 +142,16 @@ class TestFinanceQueryMapper(unittest.TestCase):
             "Profit margin": "profit_margin",
             "Monthly profit": "monthly_profit",
             "Revenue vs expenses": "revenue_vs_expenses",
+            "Daily profit": "daily_profit",
+            "Profit by region": "profit_by_region",
+            "Top expense categories": "top_expense_categories",
+            "Profit growth": "profit_growth",
         }
         for query, expected_intent in cases.items():
             self.assertEqual(self.mapper.resolve(query), expected_intent)
 
-    def test_unknown_query_falls_back_to_summary(self):
-        self.assertEqual(self.mapper.resolve("What's the weather today?"), "summary")
+    def test_unknown_query_returns_unknown_intent(self):
+        self.assertEqual(self.mapper.resolve("What's the weather today?"), "unknown")
 
 
 class TestFinanceAgent(unittest.TestCase):
@@ -167,6 +194,16 @@ class TestFinanceAgent(unittest.TestCase):
 
         self.assertEqual(result.status, "error")
 
+    def test_execute_returns_guidance_for_unknown_intent(self):
+        agent = FinanceAgent(dataset_dir=VALID_DIR)
+        task = PlannerTask(task_type="finance", query="What's the weather today?")
+        result = agent.execute(task)
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.data["kpi"], "unknown")
+        self.assertIn("I couldn't understand the requested finance KPI", result.summary)
+        self.assertEqual(result.confidence, "low")
+
     def test_agent_depends_on_the_data_access_gateway_not_the_raw_loader(self):
         agent = FinanceAgent(dataset_dir=VALID_DIR)
         self.assertTrue(hasattr(agent, "_data_access"))
@@ -198,6 +235,22 @@ class TestFinanceAgentPlannerIntegration(unittest.TestCase):
         self.assertEqual(response.participating_agents, ["finance"])
         self.assertIn("Net profit is $2,300.00", response.summary)
         self.assertEqual(response.raw_results[0]["data"]["kpi"], "summary")
+
+
+class TestFinanceAgentWithRealDataset(unittest.TestCase):
+
+    def test_execute_works_against_real_finance_dataset(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        real_dataset_dir = os.path.join(repo_root, "datasets", "finance")
+
+        agent = FinanceAgent(dataset_dir=real_dataset_dir)
+        task = PlannerTask(task_type="finance", query="Net profit")
+        result = agent.execute(task)
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.data["agent"], "finance")
+        self.assertEqual(result.data["kpi"], "net_profit")
+        self.assertGreater(result.data["net_profit"], 0)
 
 
 if __name__ == "__main__":

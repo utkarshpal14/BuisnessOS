@@ -118,7 +118,11 @@ def print_help() -> None:
         "total expenses",
         "profit margin",
         "monthly profit",
+        "daily profit",
         "revenue vs expenses",
+        "profit by region",
+        "top expense categories",
+        "profit growth",
     ]:
         print(f"  - {item}")
 
