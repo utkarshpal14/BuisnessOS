@@ -18,7 +18,7 @@ QUERY_RULES: List[Tuple[List[str], str]] = [
     (["growth", "trend"], "revenue_growth"),
 ]
 
-DEFAULT_INTENT = "summary"
+DEFAULT_INTENT = "unknown"
 
 
 class SalesQueryMapper:

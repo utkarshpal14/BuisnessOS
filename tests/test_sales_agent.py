@@ -112,8 +112,8 @@ class TestSalesQueryMapper(unittest.TestCase):
         for query, expected_intent in cases.items():
             self.assertEqual(self.mapper.resolve(query), expected_intent)
 
-    def test_unknown_query_falls_back_to_summary(self):
-        self.assertEqual(self.mapper.resolve("What's the weather today?"), "summary")
+    def test_unknown_query_returns_unknown_intent(self):
+        self.assertEqual(self.mapper.resolve("What's the weather today?"), "unknown")
 
 
 class TestSalesAgent(unittest.TestCase):
@@ -150,6 +150,15 @@ class TestSalesAgent(unittest.TestCase):
         result = agent.execute(task)
 
         self.assertEqual(result.status, "error")
+
+    def test_execute_returns_guidance_for_unknown_intent(self):
+        agent = SalesAgent(dataset_dir=VALID_DIR)
+        task = PlannerTask(task_type="sales", query="What's the weather today?")
+        result = agent.execute(task)
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.data["kpi"], "unknown")
+        self.assertIn("I couldn't understand the requested sales KPI", result.summary)
 
     def test_execute_is_stateless_across_calls(self):
         agent = SalesAgent(dataset_dir=VALID_DIR)

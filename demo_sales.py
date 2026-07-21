@@ -1,13 +1,11 @@
 """
-Demo: Real Sales Intelligence Agent, end to end through the Planner Framework.
+Interactive BusinessOS AI sales demo.
 
-    User Query -> Planner -> Task Router -> Sales Intelligence Agent
-               -> Sales Dataset -> Business KPI Analysis -> PlannerResponse
-
-Run with:  python demo_sales.py
+Run with: python demo_sales.py
 """
 import os
 import sys
+from typing import Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "backend")))
 
@@ -20,16 +18,6 @@ from app.sales.data_loader import DEFAULT_DATASET_DIR
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 FIXTURE_DATASET_DIR = os.path.join(REPO_ROOT, "tests", "fixtures", "sales", "valid")
-
-SAMPLE_QUERIES = [
-    "Show sales summary",
-    "Total revenue",
-    "Top products",
-    "Sales by region",
-    "Monthly sales",
-    "Daily sales",
-    "Average order value",
-]
 
 
 def resolve_dataset_dir() -> str:
@@ -46,46 +34,64 @@ def resolve_dataset_dir() -> str:
     return FIXTURE_DATASET_DIR
 
 
-def print_section(title: str) -> None:
+def print_welcome_screen() -> None:
     print("\n" + "=" * 70)
-    print(title)
+    print("BusinessOS AI - Sales Intelligence Demo")
     print("=" * 70)
+    print("Enter a sales-related question to query the planner.")
+    print("Type 'exit' to quit.\n")
 
 
-def run_query(planner: PlannerService, query: str) -> None:
-    print_section(f"INCOMING QUERY: \"{query}\"")
+def print_response(response) -> None:
+    print("\n" + "-" * 70)
+    print("Planner Response")
+    print("-" * 70)
+    print(f"Status               : {response.status}")
+    print(f"Task ID              : {response.task_id}")
+    print(f"Participating Agents : {response.participating_agents}")
+    print(f"Summary              : {response.summary}")
+    print(f"Execution Time (ms)  : {response.execution_time_ms:.2f}")
 
-    task = PlannerTask(task_type="sales", query=query)
-    print(f"[Planner]      received task_id={task.task_id} (source={task.source})")
-    print(f"[Task Router]  task_type='{task.task_type}' -> routed to agent(s): sales")
-
-    response = planner.execute_task(task)
-
-    print(f"[Sales Agent]  executed against dataset -> status={response.status}")
-    if response.raw_results:
-        kpi = response.raw_results[0]["data"].get("kpi")
-        print(f"[KPI Analysis] computed KPI: '{kpi}'")
-
-    print_section("PLANNER RESPONSE")
-    print(f"  status               : {response.status}")
-    print(f"  participating_agents : {response.participating_agents}")
-    print(f"  summary              : {response.summary}")
-    print(f"  execution_time_ms    : {response.execution_time_ms:.2f}")
     if response.errors:
-        print(f"  errors               : {response.errors}")
+        print("Errors               :")
+        for error in response.errors:
+            print(f"  - {error}")
+
+    if response.raw_results:
+        print("Raw Results          :")
+        for index, raw in enumerate(response.raw_results, start=1):
+            print(f"  {index}. {raw.get('summary', '')}")
+
+
+def build_planner() -> PlannerService:
+    dataset_dir = resolve_dataset_dir()
+    registry = AgentRegistry()
+    registry.register(SalesAgent(dataset_dir=dataset_dir))
+    return PlannerService(registry=registry, router=SimpleTaskRouter())
 
 
 def main() -> None:
-    dataset_dir = resolve_dataset_dir()
+    print_welcome_screen()
+    planner = build_planner()
 
-    registry = AgentRegistry()
-    registry.register(SalesAgent(dataset_dir=dataset_dir))
-    planner = PlannerService(registry=registry, router=SimpleTaskRouter())
+    while True:
+        try:
+            query = input("BusinessOS AI > ").strip()
+        except KeyboardInterrupt:
+            print("\nGoodbye.")
+            break
 
-    for query in SAMPLE_QUERIES:
-        run_query(planner, query)
+        if not query:
+            print("Please enter a question or type 'exit' to quit.\n")
+            continue
 
-    print("\nDemo complete.\n")
+        if query.lower() == "exit":
+            print("Goodbye.")
+            break
+
+        task = PlannerTask(task_type="sales", query=query)
+        response = planner.execute_task(task)
+        print_response(response)
 
 
 if __name__ == "__main__":

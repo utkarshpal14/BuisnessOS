@@ -37,6 +37,23 @@ class SalesAgent(BaseAgent):
             return self._error_result(f"Unexpected error loading sales dataset: {e}")
 
         intent = self._query_mapper.resolve(task.query)
+        if intent == "unknown":
+            summary = (
+                "I couldn't understand the requested sales KPI. "
+                "Try queries like 'Total revenue', 'Sales by region', or 'Top products'."
+            )
+            return AgentResult(
+                agent_name=self.name,
+                status="success",
+                summary=summary,
+                data={
+                    "agent": "sales",
+                    "status": "success",
+                    "summary": summary,
+                    "kpi": intent,
+                },
+            )
+
         service = SalesAnalyticsService(clean_data)
 
         try:
